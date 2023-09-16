@@ -1,0 +1,9 @@
+*cache*
+
+.vscode
+.venv
+.env
+
+mods
+
+*.csv

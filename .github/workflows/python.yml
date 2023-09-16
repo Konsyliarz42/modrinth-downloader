@@ -1,0 +1,51 @@
+name: Python workflow
+
+on:
+  push:
+
+jobs:
+  black:
+    name: black (23.9.1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install dependencies
+        run: pip install black==23.9.1
+      - name: Run black
+        run: black . --check
+
+  mypy:
+    name: mypy (1.5.1)
+    runs-on: ubuntu-latest
+    needs:
+      - black
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install dependencies
+        run: pip install mypy==1.5.1
+      - name: Run mypy
+        run: mypy .
+
+  flake8:
+    name: flake8 (6.1.0)
+    runs-on: ubuntu-latest
+    needs:
+      - black
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install dependencies
+        run: pip install flake8==6.1.0 Flake8-pyproject==1.2.3
+      - name: Run flake8
+        run: flake8 .
