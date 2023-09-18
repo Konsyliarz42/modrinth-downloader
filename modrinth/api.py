@@ -13,8 +13,9 @@ class ModrinthError(Exception):
 
 
 class ModrinthAPI:
-    def __init__(self, personal_access_token: str) -> None:
+    def __init__(self, personal_access_token: str, project_version: str) -> None:
         self.token = personal_access_token
+        self.project_version = project_version
 
     def _send_request(
         self,
@@ -24,6 +25,10 @@ class ModrinthAPI:
         url = build_url("https://api.modrinth.com/v2", endpoint, params)
         headers = {
             "Authorization": self.token,
+            "User-Agent": (
+                "https://github.com/Konsyliarz42/modrinth-downloader/tree/"
+                f"{self.project_version}"
+            ),
             "Content-Type": "application/json",
         }
 
@@ -77,21 +82,3 @@ class ModrinthAPI:
         version = Version.from_json(response_json)
 
         return version
-
-
-if __name__ == "__main__":
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    api = ModrinthAPI(os.environ["PERSONAL_ACCESS_TOKEN"])
-    response = api._send_request("/tag/loader")
-    print(
-        " | ".join(
-            [
-                r["name"]
-                for r in response.json()
-                if "mod" in r["supported_project_types"]
-            ]
-        )
-    )

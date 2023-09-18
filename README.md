@@ -18,7 +18,7 @@ In addition to the python packages, an account on [modrinth](https://modrinth.co
 
 ## Usage
 
-1. Create `.env` file from template `example.env`.
+1. Create `.env` file from template `example.env`
 2. Set variables:
 
    - `PERSONAL_ACCESS_TOKEN` - Your access token from modrinth
@@ -31,5 +31,5 @@ In addition to the python packages, an account on [modrinth](https://modrinth.co
 5. Run code:
 
    ```bash
-   python -m tui
+   python -m app
    ```
