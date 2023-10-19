@@ -7,3 +7,5 @@
 mods
 
 *.csv
+
+!example.*
