@@ -1,11 +1,8 @@
-*cache*
-
-.vscode
-.venv
 .env
+.venv
+.vscode
 
-mods
+download
+logs
 
-*.csv
-
-!example.*
+*cache*
