@@ -36,7 +36,12 @@ def create_entries_for_project(
     project: Project,
     already_created_entries: list[Entry] = [],
 ) -> list[Entry]:
-    version = get_version(api, project)
+    try:
+        version = get_version(api, project)
+    except ModrinthException:
+        print(f"- {project.name.ljust(64)} No matched version", flush=True)
+        return []
+
     print(f"- {project.name.ljust(64)} {version.number}", flush=True)
     logger.info("Adding the project to entry list with newest version: '%s'", version.id)
     entries: list[Entry] = [Entry(project=project, version=version)]
@@ -50,6 +55,9 @@ def create_entries_for_project(
         logger.debug("Dependency %i. - Project: '%s'", number, dependency.project_id)
         if dependency.type == DependencyType.OPTIONAL:
             logger.warning("Dependency is optional, skip")
+            continue
+
+        if dependency.type == DependencyType.INCOMPATIBLE:
             continue
 
         if find_in_entries([*already_created_entries, *entries], dependency.project_id):
