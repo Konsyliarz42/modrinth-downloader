@@ -58,6 +58,11 @@ def create_entries_for_project(
 
         logger.info("Fetching dependency: '%s'", dependency.project_id)
         dependency_project = api.get_project(dependency.project_id)
+
+        if dependency_project is None:
+            logger.critical("Dependency project not found, skip")
+            continue
+
         dependency_version = get_version(api, dependency_project, dependency.version_id)
         print(f"  - {dependency_project.name.ljust(62)} {dependency_version.number}", flush=True)
         logger.info("Adding dependency project to entry list")
@@ -77,6 +82,10 @@ def get_entries(api: ModrinthApi, collection: Collection) -> list[Entry]:
             continue
 
         project = api.get_project(project_id)
+
+        if project is None:
+            continue
+
         entries.extend(create_entries_for_project(api, project, entries))
 
     return entries

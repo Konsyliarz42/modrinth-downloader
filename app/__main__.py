@@ -5,7 +5,6 @@ from pathlib import Path
 
 from rich.console import Console
 
-from .models import Entry
 from .modrinth import ModrinthApi
 from .utils import download_entry, get_entries
 
@@ -62,6 +61,7 @@ def main(console: Console) -> None:
         entries = get_entries(modrinth, collection)
 
     print("\nDownload files:")
+    game_path.mkdir(exist_ok=True)
     for entry in entries:
         download_entry(game_path, entry)
 
@@ -69,8 +69,8 @@ def main(console: Console) -> None:
 if __name__ == "__main__":
     console = Console()
 
-    main(console)
-    # try:
-    #     main(console)
-    # except Exception as error:
-    #     logger.error(error)
+    try:
+        main(console)
+    except Exception as error:
+        logger.error(error)
+        raise error

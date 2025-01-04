@@ -59,6 +59,13 @@ class ModrinthApi:
 
         return response
 
+    def _match_game_versions(self, game_versions: Iterable[str]) -> bool:
+        for version in game_versions:
+            if self.game_version in version:
+                return True
+
+        return False
+
     def _is_valid(self, endpoint: str, value: str, key: str) -> bool:
         response = self._send_request(endpoint)
         response_dict: list[dict[str, Any]] = response.json()
@@ -83,7 +90,9 @@ class ModrinthApi:
         self, project_id: str, raw_versions: Iterable[dict[str, Any]]
     ) -> None:
         self.cache_file.touch()
-        cache: dict[str, dict[str, dict[str, Any]]] = json.loads(self.cache_file.read_text() or "{}")
+        cache: dict[str, dict[str, dict[str, Any]]] = json.loads(
+            self.cache_file.read_text() or "{}"
+        )
         cache[project_id] = {
             **cache.get(project_id, {}),
             **{version["id"]: version for version in raw_versions},
@@ -93,10 +102,13 @@ class ModrinthApi:
     def _get_versions_from_cache(
         self, project_id: str, version_ids: Iterable[str]
     ) -> tuple[list[Version], tuple[str, ...]]:
-        cache: dict[str, dict[str, dict[str, Any]]] = json.loads(self.cache_file.read_text() or "{}")
+        self.cache_file.touch()
+        cache: dict[str, dict[str, dict[str, Any]]] = json.loads(
+            self.cache_file.read_text() or "{}"
+        )
         project_versions = cache.get(project_id)
 
-        if not project_versions:
+        if project_versions is None:
             return [], version_ids
 
         versions = []
@@ -109,7 +121,6 @@ class ModrinthApi:
                     and self.game_version in raw_version["game_versions"]
                 ):
                     versions.append(Version.from_dict(raw_version))
-                
 
         return versions, tuple(missing_ids)
 
@@ -118,9 +129,8 @@ class ModrinthApi:
         project = Project.from_dict(response.json())
         logger.info("Project fetched: '%s'", project.name)
 
-        if (
-            self.game_loader not in project.loaders
-            or self.game_version not in project.game_versions
+        if self.game_loader not in project.loaders or not self._match_game_versions(
+            project.game_versions
         ):
             logger.warning("The project does not match the game loader or game version.")
             return None
@@ -146,7 +156,7 @@ class ModrinthApi:
                         Version.from_dict(data)
                         for data in response.json()
                         if self.game_loader in data["loaders"]
-                        and self.game_version in data["game_versions"]
+                        and self._match_game_versions(data["game_versions"])
                     ]
                 )
 

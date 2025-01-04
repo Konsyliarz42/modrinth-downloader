@@ -18,7 +18,7 @@ class File:
             name=data["filename"],
             url=data["url"],
             size=data["size"],
-            primary=data["primary"]
+            primary=data["primary"],
         )
 
 
