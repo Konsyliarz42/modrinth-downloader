@@ -1,146 +1,163 @@
 from dataclasses import dataclass
-from typing import Optional
+from datetime import datetime
+from typing import Any, TypedDict
 
-from .constants import BASE_MODRINTH_URL
-from .enums import DependencyType, ProjectType
+from .enums import (
+    ClientSideType,
+    DependencyType,
+    FileType,
+    MonetizationStatus,
+    ProjectRequestedStatus,
+    ProjectStatus,
+    ProjectType,
+    ServerSideType,
+    VersionRequestedStatus,
+    VersionStatus,
+    VersionType,
+)
 
 
-@dataclass
-class File:
-    name: str
+class DonationUrl(TypedDict):
+    id: str
+    platform: str
     url: str
-    size: int
-    primary: bool
-
-    @classmethod
-    def from_dict(cls, data: dict[str, any]) -> "File":
-        return cls(
-            name=data["filename"],
-            url=data["url"],
-            size=data["size"],
-            primary=data["primary"],
-        )
 
 
-@dataclass
-class Dependency:
-    project_id: str
-    type: DependencyType
-
-    version_id: Optional[str] = None
-
-    @classmethod
-    def from_dict(cls, data: dict[str, any]) -> "Dependency":
-        return cls(
-            project_id=data["project_id"],
-            type=data["dependency_type"],
-            version_id=data["version_id"],
-        )
+class ModeratorMessage(TypedDict):
+    message: str
+    body: str | None
 
 
-@dataclass
-class Version:
+class License(TypedDict):
     id: str
     name: str
-    number: str
-    project_id: str
-    game_versions: tuple[str]
-    loaders: tuple[str]
-    files: tuple[File, ...]
-    dependencies: tuple[Dependency, ...]
+    url: str | None
 
-    changelog: Optional[str] = None
 
-    def __eq__(self, other: "Version") -> bool:
-        return self.id == other.id
+class GalleryImage(TypedDict):
+    created: datetime
+    description: str | None
+    featured: bool
+    ordering: int
+    title: str | None
+    url: str
 
-    def __repr__(self) -> str:
-        return f"<Version: {self.id}({self.name})>"
 
-    @property
-    def modrinth_url(self) -> str:
-        return f"{BASE_MODRINTH_URL}/mod/{self.project_id}/version/{self.id}"
+class Dependency(TypedDict):
+    dependency_type: DependencyType
+    file_name: str | None
+    project_id: str | None
+    version_id: str | None
 
-    @classmethod
-    def from_dict(cls, data: dict[str, any]) -> "Version":
-        files = [File.from_dict(file_data) for file_data in data["files"]]
-        dependencies = [
-            Dependency.from_dict(dependency_data) for dependency_data in data["dependencies"]
-        ]
 
-        return cls(
-            id=data["id"],
-            name=data["name"],
-            number=data["version_number"],
-            project_id=data["project_id"],
-            game_versions=data["game_versions"],
-            loaders=data["loaders"],
-            files=files,
-            dependencies=dependencies,
-            changelog=data["changelog"],
-        )
+class FileHash(TypedDict):
+    sha512: str
+    sha1: str
+
+
+class File(TypedDict):
+    file_type: FileType | None
+    filename: str
+    hashes: list[FileHash]
+    primary: bool
+    size: int
+    url: str
 
 
 @dataclass
 class Project:
+    additional_categories: list[str]
+    approved: datetime | None
+    body: str
+    body_url: str | None
+    categories: list[str]
+    client_side: ClientSideType
+    color: int
+    description: str
+    discord_url: str | None
+    donation_urls: list[DonationUrl]
+    downloads: int
+    followers: int
+    gallery: list[GalleryImage]
+    game_versions: list[str]
+    icon_url: str | None
     id: str
-    name: str
-    game_versions: tuple[str]
-    loaders: tuple[str]
-    type: ProjectType
-    version_ids: tuple[str, ...]
+    issues_url: str | None
+    license: License
+    loaders: list[str]
+    moderator_message: ModeratorMessage
+    monetization_status: MonetizationStatus
+    project_type: ProjectType
+    published: datetime
+    queued: datetime | None
+    requested_status: ProjectRequestedStatus | None
+    server_side: ServerSideType
+    slug: str
+    source_url: str | None
+    status: ProjectStatus
+    team: str
+    thread_id: str
+    title: str
+    updated: datetime
+    versions: list[str]
+    wiki_url: str | None
 
-    description: Optional[str] = None
-
-    def __eq__(self, other: "Project") -> bool:
-        return self.id == other.id
+    organization: Any  # Not described in docs
 
     def __repr__(self) -> str:
-        return f"<Project: {self.id}({self.name})>"
+        return f"Project<{self.title} | ({self.id})>"
 
-    @property
-    def modrinth_url(self) -> str:
-        return f"{BASE_MODRINTH_URL}/mod/{self.id}"
 
-    @classmethod
-    def from_dict(cls, data: dict[str, any]) -> "Project":
-        return cls(
-            id=data["id"],
-            name=data["title"],
-            game_versions=data["game_versions"],
-            loaders=data["loaders"],
-            type=data["project_type"],
-            version_ids=data["versions"],
-            description=data["description"],
+@dataclass
+class Version:
+    author_id: str
+    changelog: str
+    changelog_url: str | None
+    date_published: datetime
+    dependencies: list[Dependency]
+    downloads: int
+    featured: bool
+    files: list[File]
+    game_versions: list[str]
+    id: str
+    loaders: list[str]
+    name: str
+    project_id: str
+    requested_status: VersionRequestedStatus | None
+    status: VersionStatus
+    version_number: str
+    version_type: VersionType
+
+    is_locked: bool = False  # Used to lock version if comes from dependency
+    locked_by: str = ""  # Project id
+    is_optional: bool = False  # Used to set optional dependency
+
+    def __repr__(self) -> str:
+        return f"Version<{self.name} | ({self.project_id} / {self.id})>"
+
+    def version_type_to_console_print(self) -> str:
+        text = self.version_type.capitalize().ljust(7)
+
+        if self.version_type == VersionType.ALPHA:
+            return f"[red]{text}[/red]"
+
+        if self.version_type == VersionType.BETA:
+            return f"[yellow]{text}[/yellow]"
+
+        return f"[green]{text}[/green]"
+
+    def to_console_print(self) -> str:
+        lock_str = " | Locked" if self.is_locked else ""
+        return (
+            f"{self.version_type_to_console_print()} | {self.version_number.ljust(32)}{lock_str}"
         )
 
 
 @dataclass
-class Collection:
+class Collection:  # Defined by me until supported by Labyrinth.
     id: str
-    name: str
-    project_ids: tuple[str, ...]
-
-    description: Optional[str] = None
-
-    @property
-    def modrinth_url(self) -> str:
-        return f"{BASE_MODRINTH_URL}/collection/{self.id}"
+    projects: list[str]
+    title: str
 
     def __repr__(self) -> str:
-        return f"<Collection: {self.id}|{self.name}>"
-
-    @classmethod
-    def from_dict(cls, data: dict[str, any]) -> "Collection":
-        return cls(
-            id=data["id"],
-            name=data["name"],
-            project_ids=data["projects"],
-            description=data["description"],
-        )
-
-
-@dataclass
-class Entry:
-    project: Project
-    version: Version
+        return f"Collection<{self.title} | ({self.id})>"

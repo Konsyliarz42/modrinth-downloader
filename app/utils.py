@@ -1,138 +1,98 @@
-from logging import getLogger
-from pathlib import Path
-from typing import Optional
-
-import httpx
-from rich.progress import Progress
-
-from .enums import DependencyType, ProjectType
-from .models import Collection, Entry, Project, Version
-from .modrinth import ModrinthApi, ModrinthException
-
-logger = getLogger("App")
+from app.enums import DependencyType
+from app.models import Project, Version
+from app.modrinth import ModrinthApi
 
 
-def find_in_entries(entries: list[Entry], project_id: str) -> Optional[Entry]:
-    return next((entry for entry in entries if entry.project.id == project_id), None)
-
-
-def get_version(api: ModrinthApi, project: Project, version_id: Optional[str] = None) -> Version:
-    logger.info("Fetching versions")
-    versions = api.get_project_versions(project)
-
-    if len(versions) == 0:
-        raise ModrinthException(
-            f"There is no matching versions for project: '{project.id}' ({project.name})"
-        )
-
-    if version := next((version for version in versions if version.id == version_id), None):
-        return version
-
-    return versions[-1]
-
-
-def create_entries_for_project(
+def read_version_dependencies(
     api: ModrinthApi,
-    project: Project,
-    already_created_entries: list[Entry] = [],
-) -> list[Entry]:
-    try:
-        version = get_version(api, project)
-    except ModrinthException:
-        print(f"- {project.name.ljust(64)} No matched version", flush=True)
-        return []
+    version: Version,
+    allow_optional: bool,
+    current_dependencies: dict[str, list[Version]] = {},
+) -> dict[str, list[Version]]:
+    dependencies = current_dependencies.copy()
 
-    print(f"- {project.name.ljust(64)} {version.number}", flush=True)
-    logger.info("Adding the project to entry list with newest version: '%s'", version.id)
-    entries: list[Entry] = [Entry(project=project, version=version)]
-
-    if len(version.dependencies) == 0:
-        return entries
-
-    logger.info("Looking for project dependencies")
-    logger.debug("- dependencies: %i", len(version.dependencies))
-    for number, dependency in enumerate(version.dependencies):
-        logger.debug("Dependency %i. - Project: '%s'", number, dependency.project_id)
-        if dependency.type == DependencyType.OPTIONAL:
-            logger.warning("Dependency is optional, skip")
+    for dependency in version.dependencies:
+        # Skip dependency if not necessary
+        if (
+            (dependency["dependency_type"] == DependencyType.OPTIONAL and not allow_optional)
+            or dependency["dependency_type"] == DependencyType.INCOMPATIBLE
+            or dependency["dependency_type"] == DependencyType.EMBEDDED
+            or not dependency["project_id"]
+        ):
             continue
 
-        if dependency.type == DependencyType.INCOMPATIBLE:
-            continue
-
-        if find_in_entries([*already_created_entries, *entries], dependency.project_id):
-            logger.warning("Dependency project already exist in entry list, skip")
-            continue
-
-        logger.info("Fetching dependency: '%s'", dependency.project_id)
-        dependency_project = api.get_project(dependency.project_id)
-
-        if dependency_project is None:
-            logger.critical("Dependency project not found, skip")
-            continue
-
-        dependency_version = get_version(api, dependency_project, dependency.version_id)
-        print(f"  - {dependency_project.name.ljust(62)} {dependency_version.number}", flush=True)
-        logger.info("Adding dependency project to entry list")
-        entries.append(Entry(project=dependency_project, version=dependency_version))
-
-    return entries
-
-
-def get_entries(api: ModrinthApi, collection: Collection) -> list[Entry]:
-    entries: list[Entry] = []
-
-    for project_id in collection.project_ids:
-        logger.info("Fetching collection project: '%s'", project_id)
-
-        if find_in_entries(entries, project_id):
-            logger.warning("Project already exist in entry list, skip")
-            continue
-
-        project = api.get_project(project_id)
-
-        if project is None:
-            continue
-
-        entries.extend(create_entries_for_project(api, project, entries))
-
-    return entries
-
-
-def download_entry(game_path: Path, entry: Entry) -> None:
-    logger.debug("Preparing directory to downloading the project: '%s'", entry.project.id)
-    file_dir: Path
-    match entry.project.type:
-        case ProjectType.MOD:
-            file_dir = game_path.joinpath("mods")
-        case ProjectType.MODPACK:
-            file_dir = game_path.joinpath("modpacks")
-        case ProjectType.RESOURCEPACK:
-            file_dir = game_path.joinpath("resourcepacks")
-        case ProjectType.SHADER:
-            file_dir = game_path.joinpath("shaderpacks")
-    file_dir.mkdir(exist_ok=True)
-
-    with Progress() as progress:
-        for file in entry.version.files:
-            # Download only primary files
-            if not file.primary:
+        # Skip dependency if already exist
+        if dependency["project_id"] in dependencies.keys():
+            all_dependency_versions = [
+                version
+                for version in dependencies[dependency["project_id"]]
+                if version.id == dependency["version_id"]
+            ]
+            if not dependency["version_id"] or all_dependency_versions:
+                if dependency["version_id"] and dependency["dependency_type"] == DependencyType.OPTIONAL:
+                    new_version = next(version for version in all_dependency_versions if version.id == dependency["version_id"])
+                    index = dependencies[dependency["project_id"]].index(new_version)
+                    new_version.is_optional = True
+                    dependencies[dependency["project_id"]][index] = new_version
                 continue
 
-            file_path = file_dir.joinpath(file.name)
+        # Find version
+        dependency_versions = api.read_project_versions(dependency["project_id"])
+        if dependency["version_id"]:
+            dependency_version = next(
+                v for v in dependency_versions if v.id == dependency["version_id"]
+            )
+            dependency_version.is_locked = True
+            dependency_version.locked_by = version.project_id
+        else:
+            dependency_version = dependency_versions[0]
+            dependency_version.is_optional = (
+                dependency["dependency_type"] == DependencyType.OPTIONAL
+            )
 
-            if file_path.exists():
-                logger.warning("Project was already downloaded, skip")
-                continue
+        # Add dependency to others
+        if dependency["project_id"] in dependencies.keys():
+            dependencies[dependency["project_id"]].append(dependency_version)
+        else:
+            dependencies[dependency["project_id"]] = [dependency_version]
 
-            logger.info("Downloading file '%s'", file.name)
-            file_path.touch()
-            with httpx.stream("GET", file.url) as response:
-                total = int(response.headers["Content-Length"])
-                download_task = progress.add_task(f"- {file.name.ljust(64)}", total=total)
+    return dependencies
 
-                with open(file_path, "wb") as file_output:
-                    for chunk in response.iter_bytes():
-                        file_output.write(chunk)
-                        progress.update(download_task, completed=response.num_bytes_downloaded)
-            logger.info("File downloaded")
+
+def resolve_dependencies(
+    api: ModrinthApi, versions: list[Version], allow_optional: bool
+) -> dict[str, list[Version]]:
+    all_dependencies: dict[str, list[Version]] = {}
+
+    for version in versions:
+        if version.project_id in all_dependencies.keys():
+            continue
+        all_dependencies[version.project_id] = [version]
+
+        dependencies = read_version_dependencies(api, version, allow_optional, all_dependencies)
+        for _, dependency_versions in dependencies.copy().items():
+            for dependency_version in dependency_versions:
+                dependencies.update(
+                    read_version_dependencies(
+                        api, dependency_version, allow_optional, all_dependencies
+                    )
+                )
+
+        all_dependencies.update(dependencies)
+
+    for project_id, dependency_versions in all_dependencies.items():
+        only_locked_versions = [version for version in dependency_versions if version.is_locked]
+        if not only_locked_versions:
+            continue
+        all_dependencies[project_id] = only_locked_versions
+
+    return all_dependencies
+
+
+def get_or_fetch_project(api: ModrinthApi, project_id: str, projects: list[Project]) -> Project:
+    project_in_list = [project for project in projects if project.id == project_id]
+    if project_in_list:
+        return project_in_list[0]
+
+    project_in_api = api.read_projects([project_id])
+    return project_in_api[0]
