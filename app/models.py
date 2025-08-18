@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypedDict
 
@@ -107,6 +107,18 @@ class Project:
     def __repr__(self) -> str:
         return f"Project<{self.title} | ({self.id})>"
 
+    def to_console_print(self, index: int) -> str:
+        index_str = f"[black]{str(index + 1).zfill(2).rjust(3)}. [/black]"
+        title = f"[bold white]{self.title}[/bold white]"
+        client_side = (
+            "[blue] [Client][/blue]" if self.client_side == ClientSideType.REQUIRED else ""
+        )
+        server_side = (
+            "[magenta] [Server][/magenta]" if self.server_side == ServerSideType.REQUIRED else ""
+        )
+
+        return index_str + title + client_side + server_side
+
 
 @dataclass
 class Version:
@@ -128,9 +140,15 @@ class Version:
     version_number: str
     version_type: VersionType
 
-    is_locked: bool = False  # Used to lock version if comes from dependency
-    locked_by: str = ""  # Project id
-    is_optional: bool = False  # Used to set optional dependency
+    required_by: list[str] = field(
+        default_factory=list[str]
+    )  # Used to store project ids who require this version
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Version):
+            return NotImplemented
+
+        return self.id == other.id
 
     def __repr__(self) -> str:
         return f"Version<{self.name} | ({self.project_id} / {self.id})>"
@@ -146,11 +164,13 @@ class Version:
 
         return f"[green]{text}[/green]"
 
-    def to_console_print(self) -> str:
-        lock_str = " | Locked" if self.is_locked else ""
-        return (
-            f"{self.version_type_to_console_print()} | {self.version_number.ljust(32)}{lock_str}"
+    def to_console_print(self, projects: list[Project]) -> str:
+        required_by = ", ".join(
+            [project.title for project in projects if project.id in self.required_by]
         )
+        if required_by:
+            required_by = f" | Required by: {required_by}"
+        return f"     {self.version_type_to_console_print()}[black] | {self.version_number.ljust(32)}{required_by}[/black]"
 
 
 @dataclass

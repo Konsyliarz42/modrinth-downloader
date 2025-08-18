@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Any, Final, cast
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, HTTPError
 
 import tomllib
 from bs4 import BeautifulSoup, Tag
@@ -22,10 +22,9 @@ class ModrinthApi:
         self.token = token
 
         self.game_versions = [game_version]
-        if (game_version.count(".") == 2):
+        if game_version.count(".") == 2:
             version, _ = game_version.rsplit(".", 1)
             self.game_versions.append(version)
-        
 
     def _build_user_agent(self) -> str:
         pyproject = tomllib.loads(Path("pyproject.toml").read_text())["tool"]["poetry"]
@@ -80,6 +79,26 @@ class ModrinthApi:
 
         return response
 
+    def validate_game_version(self) -> bool:
+        url = self._build_url("tag/game_version")
+        response = self._send_request(url)
+        all_game_versions = [res["version"] for res in response.json()]
+
+        if set(self.game_versions).issubset(all_game_versions):
+            return True
+
+        return False
+
+    def validate_loaders(self) -> bool:
+        url = self._build_url("tag/loader")
+        response = self._send_request(url)
+        all_loaders = [res["name"] for res in response.json()]
+
+        if set(self.game_loaders).issubset(all_loaders):
+            return True
+
+        return False
+
     def read_projects(self, ids: list[str]) -> list[Project]:
         url = self._build_url("projects", {"ids": ids})
         response = self._send_request(url)
@@ -110,7 +129,10 @@ class ModrinthApi:
     ) -> Collection | None:  # Labyrinth does not yet support collections
         url = f"{BASE_URL}/collection/{id}"
         request = Request(url, headers={"User-Agent": self._build_user_agent()})  # noqa: S310
-        page = urlopen(request)  # noqa: S310
+        try:
+            page = urlopen(request)  # noqa: S310
+        except HTTPError:
+            return None
         soup = BeautifulSoup(page, "html.parser")
 
         h1 = cast(Tag | None, soup.find("h1", attrs={"class": "title"}))

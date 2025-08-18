@@ -1,98 +1,89 @@
-from app.enums import DependencyType
-from app.models import Project, Version
-from app.modrinth import ModrinthApi
+from . import get_logger
+from .enums import DependencyType, VersionType
+from .models import Version
+from .modrinth import ModrinthApi
+
+logger = get_logger("app-utils")
 
 
-def read_version_dependencies(
-    api: ModrinthApi,
-    version: Version,
-    allow_optional: bool,
-    current_dependencies: dict[str, list[Version]] = {},
-) -> dict[str, list[Version]]:
-    dependencies = current_dependencies.copy()
+def find_version(version_id: str, versions: list[Version]) -> Version | None:
+    for version in versions:
+        if version.id == version_id:
+            return version
 
-    for dependency in version.dependencies:
-        # Skip dependency if not necessary
-        if (
-            (dependency["dependency_type"] == DependencyType.OPTIONAL and not allow_optional)
-            or dependency["dependency_type"] == DependencyType.INCOMPATIBLE
-            or dependency["dependency_type"] == DependencyType.EMBEDDED
-            or not dependency["project_id"]
-        ):
-            continue
-
-        # Skip dependency if already exist
-        if dependency["project_id"] in dependencies.keys():
-            all_dependency_versions = [
-                version
-                for version in dependencies[dependency["project_id"]]
-                if version.id == dependency["version_id"]
-            ]
-            if not dependency["version_id"] or all_dependency_versions:
-                if dependency["version_id"] and dependency["dependency_type"] == DependencyType.OPTIONAL:
-                    new_version = next(version for version in all_dependency_versions if version.id == dependency["version_id"])
-                    index = dependencies[dependency["project_id"]].index(new_version)
-                    new_version.is_optional = True
-                    dependencies[dependency["project_id"]][index] = new_version
-                continue
-
-        # Find version
-        dependency_versions = api.read_project_versions(dependency["project_id"])
-        if dependency["version_id"]:
-            dependency_version = next(
-                v for v in dependency_versions if v.id == dependency["version_id"]
-            )
-            dependency_version.is_locked = True
-            dependency_version.locked_by = version.project_id
-        else:
-            dependency_version = dependency_versions[0]
-            dependency_version.is_optional = (
-                dependency["dependency_type"] == DependencyType.OPTIONAL
-            )
-
-        # Add dependency to others
-        if dependency["project_id"] in dependencies.keys():
-            dependencies[dependency["project_id"]].append(dependency_version)
-        else:
-            dependencies[dependency["project_id"]] = [dependency_version]
-
-    return dependencies
+    return None
 
 
-def resolve_dependencies(
-    api: ModrinthApi, versions: list[Version], allow_optional: bool
-) -> dict[str, list[Version]]:
-    all_dependencies: dict[str, list[Version]] = {}
+def get_newest_versions(versions: list[Version]) -> list[Version]:
+    alphas: list[Version] = []
+    betas: list[Version] = []
+    releases: list[Version] = []
 
     for version in versions:
-        if version.project_id in all_dependencies.keys():
-            continue
-        all_dependencies[version.project_id] = [version]
+        if not alphas and version.version_type == VersionType.ALPHA:
+            alphas.append(version)
+        if not betas and version.version_type == VersionType.BETA:
+            betas.append(version)
+        if not releases and version.version_type == VersionType.RELEASE:
+            releases.append(version)
 
-        dependencies = read_version_dependencies(api, version, allow_optional, all_dependencies)
-        for _, dependency_versions in dependencies.copy().items():
-            for dependency_version in dependency_versions:
-                dependencies.update(
-                    read_version_dependencies(
-                        api, dependency_version, allow_optional, all_dependencies
-                    )
+        if alphas and betas and releases:
+            break
+
+    return alphas + betas + releases
+
+
+def get_dependency_dict(
+    api: ModrinthApi, download_dict: dict[str, list[Version]], version: Version
+) -> dict[str, list[Version]]:
+    logger.info("Resolving dependencies for: '%s'", version.id)
+    new_download_dict = download_dict.copy()
+
+    logger.debug("  Number of dependencies: %s", len(version.dependencies))
+    for dependency in version.dependencies:
+        if dependency["dependency_type"] != DependencyType.REQUIRED or not dependency["project_id"]:
+            logger.warning("  Dependency is not required or have not `project_id`, skip")
+            continue
+
+        logger.debug("  - Dependency project: '%s'", dependency["project_id"])
+
+        if dependency["project_id"] in new_download_dict.keys():
+            if not dependency["version_id"]:
+                logger.warning("    Project is already on the list, skip")
+                continue
+
+            version_index = [
+                index
+                for index, ver in enumerate(new_download_dict[dependency["project_id"]])
+                if ver.id == dependency["version_id"]
+            ]
+            if version_index:
+                new_download_dict[dependency["project_id"]][version_index[0]].required_by.append(
+                    version.project_id
                 )
+                logger.warning("    Version is already on the list, skip")
+                continue
+            logger.debug("    Version required: '%s'", dependency["version_id"])
+            logger.debug(
+                "    Versions on the list: %s",
+                [ver.id for ver in new_download_dict[dependency["project_id"]]],
+            )
 
-        all_dependencies.update(dependencies)
+        versions = api.read_project_versions(dependency["project_id"])
+        logger.debug("    Project versions: %s", len(versions))
+        selected_version = versions[0]
 
-    for project_id, dependency_versions in all_dependencies.items():
-        only_locked_versions = [version for version in dependency_versions if version.is_locked]
-        if not only_locked_versions:
-            continue
-        all_dependencies[project_id] = only_locked_versions
+        if dependency["version_id"]:
+            selected_version = next(ver for ver in versions if ver.id == dependency["version_id"])
+            selected_version.required_by.append(version.project_id)
 
-    return all_dependencies
+        logger.debug("    Selected version: '%s'", selected_version.id)
 
+        if dependency["project_id"] in new_download_dict.keys():
+            new_download_dict[dependency["project_id"]].append(selected_version)
+        else:
+            new_download_dict[dependency["project_id"]] = [selected_version]
 
-def get_or_fetch_project(api: ModrinthApi, project_id: str, projects: list[Project]) -> Project:
-    project_in_list = [project for project in projects if project.id == project_id]
-    if project_in_list:
-        return project_in_list[0]
+        new_download_dict.update(get_dependency_dict(api, new_download_dict, selected_version))
 
-    project_in_api = api.read_projects([project_id])
-    return project_in_api[0]
+    return new_download_dict

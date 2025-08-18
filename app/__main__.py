@@ -8,10 +8,10 @@ from rich_argparse import (
     RawTextRichHelpFormatter,
 )
 
-from app.utils import get_or_fetch_project, resolve_dependencies
-
+from . import get_logger
 from .models import Version
 from .modrinth import ModrinthApi
+from .utils import get_dependency_dict
 
 
 class UltimateHelpFormatter(
@@ -44,86 +44,79 @@ def get_parser() -> ArgumentParser:
 
 
 if __name__ == "__main__":
+    logger = get_logger("app")
+    logger.warning("---- START ----")
     parser = get_parser()
+    logger.debug("Start argument parsing")
     args = parser.parse_args()
-    console = Console()
 
     collection_id: str = args.collection
     if collection_id.startswith("http"):
         _, collection_id = collection_id.rsplit("/", 1)
 
+    logger.info("Parsed arguments: '%s', %s, '%s'", args.game_version, args.loader, args.collection)
+
     api = ModrinthApi(args.game_version, args.loader)
+    console = Console()
 
-    # Collection
+    # Validations
 
-    with console.status("[bold blue]Reading collection...") as status:
-        collection = api.read_collection(collection_id)
-    if not collection:
-        console.print("[red]Collection not found[/red]")
-        exit(1)
+    logger.debug("Validate game versions: %s", api.game_versions)
+    with console.status("[bold blue]Checking game version...[/bold blue]"):
+        if not api.validate_game_version():
+            console.print("\n[bold red]Game version is invalid[/bold red]")
+            logger.critical("Game versions invalid")
+            exit(1)
 
     console.print(
-        f"Collection: [bold green]{collection.title}[/bold green]",
-        f"Game version: [bold green]{args.game_version}[/bold green]",
-        f"Loaders: [bold green]{'[white], [/white]'.join(args.loader)}[/bold green]",
-        sep="\n",
-        end="\n\n",
+        f"[black]Game version: [/black][bold green]{', '.join(api.game_versions)}[/bold green]"
     )
 
-    # Projects
+    logger.debug("Validate loaders: %s", api.game_loaders)
+    with console.status("[bold blue]Checking loaders...[/bold blue]"):
+        if not api.validate_loaders():
+            console.print("\n[bold red]Loaders are invalid[/bold red]")
+            logger.critical("Loaders invalid")
+            exit(1)
 
-    with console.status("[bold blue]Reading collection projects...") as status:
-        projects = api.read_projects(collection.projects)
-    if not projects:
-        console.print("[yellow]Collection is empty[/yellow]")
-        exit(0)
+    console.print(f"[black]Loader: [/black][bold green]{', '.join(api.game_loaders)}[/bold green]")
+
+    logger.info("Fetching collection: '%s'", collection_id)
+    with console.status("[bold blue]Fetching collection...[/bold blue]"):
+        collection = api.read_collection(collection_id)
+        if not collection:
+            console.print("\n[bold red]Collection not found[/bold red]")
+            logger.critical("Collection not found")
+            exit(1)
+
+    console.print(f"[black]Collection: [/black][bold green]{collection.title}[/bold green]")
 
     # Versions
 
-    versions: list[Version] = []
-    with console.status("[bold blue]Reading projects versions...") as status:
-        for project in projects:
-            project_versions = api.read_project_versions(project.id)
-            if not project_versions:
+    download_dict: dict[str, list[Version]] = {}
+    logger.info("Fetching versions")
+    with console.status("[bold blue]Fetching projects versions...[/bold blue]"):
+        for project_id in collection.projects:
+            logger.debug("- Project: '%s'", project_id)
+            if download_dict.get(project_id):
+                logger.debug("  Project already fetched, skip")
                 continue
-            project_newest_version = project_versions[0]
-            versions.append(project_newest_version)
+            versions = api.read_project_versions(project_id)
+            logger.debug("  Project versions: %s", len(versions))
+            selected_version = versions[0]
+            download_dict[project_id] = [selected_version]
+            logger.debug("  Project newest version: '%s'", selected_version.id)
+            download_dict.update(get_dependency_dict(api, download_dict, selected_version))
 
-    # Dependencies
+    # Projects
 
-    dependencies: dict[str, list[Version]] = dict((project.id, []) for project in projects)
-    with console.status("[bold blue]Checking collection dependencies...") as status:
-        dependencies = resolve_dependencies(api, versions, args.optional)
+    logger.info("Fetching projects")
+    with console.status("[bold blue]Fetching projects details...[/bold blue]"):
+        projects = api.read_projects(list(download_dict.keys()))
 
-    # Summary
-
-    for index, item in enumerate(dependencies.items()):
-        project_id, dependency_versions = item
-        project = get_or_fetch_project(api, project_id, projects)
-        index_number = (str(index + 1).zfill(2) + ". ").rjust(5)
-
-        console.print(
-            f"[bold black]{index_number}[/bold black][bold white]{project.title}[/bold white]"
-        )
-
-        if len(dependency_versions) == 0:
-            console.print(
-                f"{' ' * len(index_number)}[yellow]No available versions[/yellow]\n"
-            )
-            continue
-
-        if len(dependency_versions) > 1:
-            for dependency_version in dependency_versions:
-                locked_project = get_or_fetch_project(api, dependency_version.locked_by, projects)
-                optional_str = " (optional)" if dependency_version.is_optional else ""
-                projects.append(locked_project)
-                console.print(
-                    f"{' ' * len(index_number)}[black]{dependency_version.to_console_print()}[/black]"
-                )
-            print()
-            continue
-
-        dependency_version = dependency_versions[0]
-        console.print(
-            f"{' ' * len(index_number)}[black]{dependency_version.to_console_print()}[/black]\n"
-        )
+    print()
+    for index, project in enumerate(projects):
+        console.print(project.to_console_print(index))
+        for version in download_dict[project.id]:
+            console.print(version.to_console_print(projects))
+        print()
