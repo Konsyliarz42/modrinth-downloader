@@ -13,6 +13,7 @@ beautifulsoup4 = "^4.13.4"
 httpx = "^0.28.1"
 rich = "^14.1.0"
 rich-argparse = "^1.7.1"
+questionary = "^2.1.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.12.8"

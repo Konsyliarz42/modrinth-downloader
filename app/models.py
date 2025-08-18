@@ -119,6 +119,24 @@ class Project:
 
         return index_str + title + client_side + server_side
 
+    @property
+    def is_client(self) -> bool:
+        return (
+            self.client_side == ClientSideType.REQUIRED
+            or self.client_side == ClientSideType.UNKNOWN
+            or self.server_side == ServerSideType.UNKNOWN
+            or self.server_side == ServerSideType.UNSUPPORTED
+        )
+
+    @property
+    def is_server(self) -> bool:
+        return (
+            self.server_side == ServerSideType.REQUIRED
+            or self.server_side == ServerSideType.UNKNOWN
+            or self.client_side == ClientSideType.UNKNOWN
+            or self.client_side == ClientSideType.UNSUPPORTED
+        )
+
 
 @dataclass
 class Version:
@@ -170,7 +188,11 @@ class Version:
         )
         if required_by:
             required_by = f" | Required by: {required_by}"
+
         return f"     {self.version_type_to_console_print()}[black] | {self.version_number.ljust(32)}{required_by}[/black]"
+
+    def to_questionary(self) -> str:
+        return f"{self.version_type.capitalize().ljust(7)} | {self.version_number.ljust(32)}"
 
 
 @dataclass
