@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
-from sys import exit
 from enum import Enum
+from pathlib import Path
+from sys import exit
 
 import questionary
 from rich.console import Console
@@ -10,12 +11,16 @@ from rich_argparse import (
     RawTextRichHelpFormatter,
 )
 
-from app.enums import VersionType
-
 from . import Logger
 from .models import Project, Version
 from .modrinth import ModrinthApi
-from .utils import get_dependency_dict, get_final_versions, get_newest_version, print_project_list
+from .utils import (
+    download_project,
+    get_dependency_dict,
+    get_final_versions,
+    get_newest_version,
+    print_project_list,
+)
 
 
 class Option(Enum):
@@ -179,6 +184,7 @@ if __name__ == "__main__":
 
     # Collisions
 
+    logger.info("Detected collisions: %s", len(collisions))
     if collisions:
         console.print(
             "[bold red]\nCollisions detected![/bold red]",
@@ -203,6 +209,7 @@ if __name__ == "__main__":
 
     # Summary
 
+    logger.info("Waiting for start download")
     console.print("[bold green]Your collection is ready!\n[/bold green]")
     option = Option.SHOW_LIST
 
@@ -223,16 +230,31 @@ if __name__ == "__main__":
         ).unsafe_ask()
 
         if option == Option.SHOW_LIST:
+            logger.debug("User requested for printing list", indent_level=1)
             print_project_list(console, download_dict, projects)
         if option == Option.EXIT:
             exit(0)
+            logger.debug("User requested for exit")
         if option == Option.DOWNLOAD_CLIENT:
+            logger.debug("User requested for filtering client projects", indent_level=1)
             download_dict = dict(
                 (project.id, download_dict[project.id]) for project in projects if project.is_client
             )
         if option == Option.DOWNLOAD_SERVER:
+            logger.debug("User requested for filtering server projects", indent_level=1)
             download_dict = dict(
                 (project.id, download_dict[project.id]) for project in projects if project.is_server
             )
 
-    print(download_dict)
+    # Download
+
+    logger.info("Start download projects")
+    download_path = Path("download")
+    download_path.mkdir(exist_ok=True)
+    for project_id, versions in download_dict.items():
+        project = next(p for p in projects if p.id == project_id)
+        version = versions[0]
+        download_project(console, project, version, api.game_version, download_path)
+
+    logger.info("Download end")
+    console.print("\n[bold green]Download complete[/bold green]")

@@ -1,8 +1,13 @@
+from pathlib import Path
+
+import httpx
+from rich.console import Console
+from rich.progress import Progress
+
 from . import Logger
 from .enums import DependencyType, VersionType
 from .models import Project, Version
 from .modrinth import ModrinthApi
-from rich.console import Console
 
 logger = Logger("app-utils")
 
@@ -128,3 +133,41 @@ def print_project_list(
             console.print(version.to_console_print(projects))
 
         print()
+
+
+def download_project(
+    console: Console,
+    project: Project,
+    version: Version,
+    game_version: str,
+    download_dir: Path,
+) -> None:
+    logger.info("- Project: '%s'", project.id)
+
+    file = next(f for f in version.files if f["primary"])
+    _, file_suffix = file["filename"].rsplit(".", 1)
+    file_name = f"[{game_version}] {project.slug} {version.version_number}.{file_suffix}"
+    file_path = download_dir.joinpath(file_name)
+
+    logger.debug("Download destination: '%s'", file_path, indent_level=1)
+
+    if file_path.exists():
+        logger.debug("File already exist, skip", indent_level=1)
+        console.print(f"- {project.title.ljust(64)} [yellow]Already exist[/yellow]")
+        return
+
+    logger.debug("Download start", indent_level=1)
+    with Progress() as progress:
+        with httpx.stream("GET", file["url"]) as response:
+            if response.is_error:
+                logger.error("Download error: %s", response.status_code)
+
+            with open(file_path, "wb") as final_file:
+                total = int(response.headers["Content-Length"])
+                download_task = progress.add_task(f"- {project.title.ljust(64)}", total=total)
+
+                for chunk in response.iter_bytes():
+                    final_file.write(chunk)
+                    progress.update(download_task, completed=response.num_bytes_downloaded)
+
+    logger.debug("Download complete", indent_level=1)
